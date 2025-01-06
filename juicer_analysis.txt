@@ -1,0 +1,86 @@
+## This file is used to document all the necessary steps that needed to be taken to successfully run the Juicer pipeline for HiC analysis
+
+## Installation
+
+#Juicer requires the use of a cluster or the cloud, with ideally >= 4 cores (min 1 core) and >= 64 GB RAM (min 16 GB RAM)
+
+#We shall run the Juicer on CPU
+
+# HiCCUPs need GPU by default but since in HPC it is showing issues, we shall continue with --cpu flag for it
+
+# Downloaded juicertools.jar file (latest) from the following link: https://github.com/aidenlab/Juicebox/releases
+
+wget https://github.com/aidenlab/Juicebox/releases/download/v2.20.00/juicer_tools.2.20.00.jar
+
+#Download all the CPU files from the following link: https://github.com/aidenlab/juicer/tree/main/CPU
+ For example I have saved the juicer scripts in ~/softwares/juicer/
+	-scripts/
+	-references/
+	-restriction_sites/
+
+## Folder structure:
+
+For example we are creating the folder diff_sample which will contain the hic fastq files diff_s1_R1.fastq.gz and diff_s1_R2.fastq.gz
+
+cd ~/
+mkdir diff_sample
+diff_sample/
+	-trimming/
+		-diff_s1_R1.fastq.gz (original fastq file)
+		-diff_s1_R2.fastq.gz (original fastq file)
+		-fastp.sh (script for fastp analysis on fastq hic files)
+			<cat fastp.sh>
+			fastp -i diff_s1_R1.fastq.gz -I diff_s1_R2.fastq.gz -o ../fastq/diff_s1_R1.fastq.gz -O ../fastq/diff_s1_R2.fastq.gz
+	-fastq/ (trimmed fastq files)
+		-diff_s1_R1.fastq.gz
+		-diff_s1_R2.fastq.gz
+	-juicer_run
+		-juicer_analysis.sh
+			<cat juicer_analysis.sh>
+			fastq="~/diff_sample" #location of the parent folder with the fastq folder
+			module load cuda/8.0
+			/scratch/avik.bio.iith/softwares/juicer/scripts/juicer.sh \
+        			-D ~/softwares/juicer \ #location of the juicer utility script
+        			-d $fastq \
+        			-g hg38 \
+        			-s Arima \
+        			-y ~/softwares/juicer/restriction_sites/hg38_Arima.txt \
+        			-z ~/softwares/juicer/references/hg38.fa \
+        			-p ~/softwares/juicer/references/hg38.sizes.genome 
+		-juicer_analysis.ext.sh (run HICCUPS and Arrowhead)
+			<cat juicer_analysis.ext.sh>
+			juicer_tools_path="~/softwares/juicer/scripts/common/juicer_tools.jar"
+			bed_file_dir="~/softwares/juicer/references/motif"
+			outputdir="~/igib_hic/trf2si_sample/sample1/aligned"
+			site_file="~/softwares/juicer/restriction_sites/hg38_Arima.txt"
+			resstr="-r 2500000,1000000,500000,250000,100000,50000,25000,10000,5000,2000,1000,500,200,100"
+			fragstr="-f $site_file"
+			threadHicString="--threads 32"
+			genomeID="hg38"
+
+			## Pre
+			#java -jar ${juicer_tools_path} pre -s $outputdir/inter_30.txt $fragstr $resstr $threadHicString $outputdir/merged30.txt $outputdir/inter_30.ext.hic $genomeID # to create hic files from HiC contacts file (merged30.txt)
+			## Hiccups
+			java -jar ${juicer_tools_path} hiccups --cpu -r 50000 $outputdir/inter_30.hic $outputdir/inter_30_loops_ext
+			java -jar ${juicer_tools_path} hiccups --cpu -r 25000 $outputdir/inter_30.hic $outputdir/inter_30_loops_ext
+			java -jar ${juicer_tools_path} hiccups --cpu -r 10000 $outputdir/inter_30.hic $outputdir/inter_30_loops_ext
+			java -jar ${juicer_tools_path} hiccups --cpu -r 5000 $outputdir/inter_30.hic $outputdir/inter_30_loops_ext
+
+			## Arrowhead
+			java -jar ${juicer_tools_path} arrowhead -r 50000 $outputdir/inter_30.hic $outputdir/inter_30_contact_domains_ext
+			java -jar ${juicer_tools_path} arrowhead -r 25000 $outputdir/inter_30.hic $outputdir/inter_30_contact_domains_ext
+			java -jar ${juicer_tools_path} arrowhead -r 10000 $outputdir/inter_30.hic $outputdir/inter_30_contact_domains_ext
+			java -jar ${juicer_tools_path} arrowhead -r 5000 $outputdir/inter_30.hic $outputdir/inter_30_contact_domains_ext
+
+
+
+
+################ ERRORS DEBUGGING #####################
+
+1. Cannot read .hic file -> change the juicer_tools.jar and juicer.sh to the latest file from the websites
+2. Error file formig up to 1 TB (mainly die to Java errors) -- remove the no. of threads from the script, use the deafult threads setting
+3. GPU error: the juicer won't run in GPU even if the gpu node is specified. There is some issue with the hpc cuda and it is not compatible with the juicer file, hece we need to specify --cpu flag in HICCUPS
+4. Remove the --ignore-sparsity flag from the hiccups and arrowhead for the new juicer_tools.jar file
+5. Max no. of threads for pre, hiccups, arrowhead is 24, we cannot go beyond that, or else it will return java error and the error file will be huge.
+
+Average time for hic files and contact domains calculation: ~1 day per sample
